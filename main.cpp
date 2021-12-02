@@ -7,9 +7,11 @@ extern "C"
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/frame.h>
+#include <libavutil/opt.h>
+#include <libavfilter/avfilter.h>
+#include <libavfilter/buffersrc.h>
+#include <libavfilter/buffersink.h>
 }
-
-using namespace std;
 
 int check(int code) {
     if (code >= 0)
@@ -47,6 +49,9 @@ struct unique_av_resource {
         value = o.value;
         o.value = nullptr;
         return *this;
+    }
+    auto operator*() {
+        return *value;
     }
     T operator->() {
         return value;
@@ -87,6 +92,10 @@ using unique_av_frame =
     unique_av_resource<AVFrame*, av_frame_free>;
 using unique_av_packet =
     unique_av_resource<AVPacket*, av_packet_free>;
+using unique_av_filter_in_out =
+    unique_av_resource<AVFilterInOut*, avfilter_inout_free>;
+using unique_av_filter_graph =
+    unique_av_resource<AVFilterGraph*, avfilter_graph_free>;
 
 int main()
 {
@@ -119,6 +128,46 @@ int main()
 
     check(avcodec_open2(codec_context.get(), codec, nullptr));
 
+    // pixel format conversion
+    // filters are stringly typed
+    const AVFilter* buffer = avfilter_get_by_name("buffer");
+    const AVFilter* buffer_sink = avfilter_get_by_name("buffersink");
+    unique_av_filter_in_out input;
+    unique_av_filter_in_out output;
+    unique_av_filter_graph graph = avfilter_graph_alloc();
+    AVFilterContext* source_context = nullptr;
+    AVFilterContext* sink_context = nullptr;
+
+    AVRational time_base = format_context->streams[stream_index]->time_base;
+    // filter parameters are also stringly typed
+    // TODO: use codec_context->sample_aspect_ratio
+    // TODO: figure out what to do if sample_aspect_ratio is unknown (0)
+    char filter[512];
+    std::snprintf(
+        filter, sizeof(filter),
+        "buffer=video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=1/1,"
+        "colorspace=all=bt709:trc=srgb:format=yuv420p:range=pc:"
+        "iall=bt709," // TODO: don't override if specified in input
+        "buffersink",
+        codec_context->width, codec_context->height, codec_context->pix_fmt,
+        time_base.num, time_base.den
+    );
+
+    check(avfilter_graph_parse2(
+        graph.get(), filter,
+        out_ptr(input), out_ptr(output)
+    ));
+    check(avfilter_graph_config(graph.get(), nullptr));
+
+    source_context = avfilter_graph_get_filter(graph.get(), "Parsed_buffer_0");
+    sink_context =
+        avfilter_graph_get_filter(graph.get(), "Parsed_buffersink_2");
+
+    char* dump = avfilter_graph_dump(graph.get(), "");
+    std::cout << dump << std::endl;
+    av_free(dump);
+
+    // decode a frame
     unique_av_frame frame = av_frame_alloc();
     unique_av_packet packet = av_packet_alloc();
 
@@ -134,10 +183,15 @@ int main()
         // 1 packet may contain 0, 1 or more frames
         result = avcodec_receive_frame(codec_context.get(), frame.get());
         // TODO: handle more frames
+
+        if (result == 0) {
+            check(av_buffersrc_add_frame(source_context, frame.get()));
+            check(av_buffersink_get_frame(sink_context, frame.get()));
+        }
     } while(result == AVERROR(EAGAIN) || result == AVERROR_EOF);
 
     check(result);
 
-    cout << "Hello World!" << endl;
+    std::cout << "Hello World!" << std::endl;
     return 0;
 }

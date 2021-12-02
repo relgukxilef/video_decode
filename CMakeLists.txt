@@ -7,4 +7,4 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_executable(video_decode main.cpp)
 
-target_link_libraries(video_decode avcodec avformat avutil)
+target_link_libraries(video_decode avcodec avformat avutil avfilter)
