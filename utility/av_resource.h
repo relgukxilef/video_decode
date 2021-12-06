@@ -2,6 +2,8 @@
 
 #include <stdexcept>
 
+#include "resource.h"
+
 extern "C" {
 #include <libavutil/avutil.h>
 }
@@ -22,46 +24,6 @@ inline int check(int code) {
     throw std::runtime_error("Unknown error");
 }
 
-template<typename T, auto Deleter>
-struct unique_av_resource {
-    typedef T pointer;
-
-    unique_av_resource() : value(nullptr) {}
-    unique_av_resource(T value) : value(value) {}
-    unique_av_resource(const unique_av_resource&) = delete;
-    unique_av_resource(unique_av_resource&& o) : value(o.value) {
-        o.value = nullptr;
-    }
-    ~unique_av_resource() {
-        if (value != nullptr)
-            Deleter(&value);
-    }
-    unique_av_resource& operator= (const unique_av_resource&) = delete;
-    unique_av_resource& operator= (unique_av_resource&& o) {
-        if (value != nullptr)
-            Deleter(&value);
-        value = o.value;
-        o.value = nullptr;
-        return *this;
-    }
-    auto operator*() {
-        return *value;
-    }
-    T operator->() {
-        return value;
-    }
-    operator bool() const {
-        return value;
-    }
-
-    const T& get() {
-        return value;
-    };
-
-private:
-    T value;
-};
-
 extern "C" {
 void avformat_close_input(struct AVFormatContext**);
 void avcodec_free_context(struct AVCodecContext**);
@@ -72,14 +34,14 @@ void avfilter_graph_free(struct AVFilterGraph**);
 }
 
 using unique_av_format_context =
-    unique_av_resource<struct AVFormatContext*, avformat_close_input>;
+    unique_resource<struct AVFormatContext*, avformat_close_input>;
 using unique_av_codec_context =
-    unique_av_resource<AVCodecContext*, avcodec_free_context>;
+    unique_resource<AVCodecContext*, avcodec_free_context>;
 using unique_av_frame =
-    unique_av_resource<AVFrame*, av_frame_free>;
+    unique_resource<AVFrame*, av_frame_free>;
 using unique_av_packet =
-    unique_av_resource<AVPacket*, av_packet_free>;
+    unique_resource<AVPacket*, av_packet_free>;
 using unique_av_filter_in_out =
-    unique_av_resource<AVFilterInOut*, avfilter_inout_free>;
+    unique_resource<AVFilterInOut*, avfilter_inout_free>;
 using unique_av_filter_graph =
-    unique_av_resource<AVFilterGraph*, avfilter_graph_free>;
+    unique_resource<AVFilterGraph*, avfilter_graph_free>;

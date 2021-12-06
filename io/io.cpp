@@ -16,6 +16,7 @@ extern "C" {
 #include "../utility/out_ptr.h"
 
 file::file(const char *filename) {
+    // demuxer
     check(avformat_open_input(
         out_ptr(format_context), filename, nullptr, nullptr
     ));
