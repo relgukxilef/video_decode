@@ -49,6 +49,19 @@ file::file(const char *filename) {
     source_context = nullptr;
     sink_context = nullptr;
 
+    auto color_space = codec_context->colorspace;
+    if (color_space == AVCOL_SPC_UNSPECIFIED)
+        color_space = AVCOL_SPC_BT709;
+    auto color_primaries = codec_context->color_primaries;
+    if (color_primaries == AVCOL_PRI_UNSPECIFIED)
+        color_primaries = AVCOL_PRI_BT709;
+    auto color_transfer_characteristic = codec_context->color_trc;
+    if (color_transfer_characteristic == AVCOL_TRC_UNSPECIFIED)
+        color_transfer_characteristic = AVCOL_TRC_BT709;
+    auto color_range = codec_context->color_range;
+    if (color_range == AVCOL_RANGE_UNSPECIFIED)
+        color_range = AVCOL_RANGE_MPEG;
+
     AVRational time_base = format_context->streams[stream_index]->time_base;
     // filter parameters are stringly typed
     // TODO: use codec_context->sample_aspect_ratio
@@ -58,10 +71,11 @@ file::file(const char *filename) {
         filter, sizeof(filter),
         "buffer=video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=1/1,"
         "colorspace=all=bt709:trc=srgb:format=yuv420p:range=pc:"
-        "iall=bt709," // TODO: don't override if specified in input
+        "ispace=%d:iprimaries=%d:itrc=%d:irange=%d,"
         "buffersink",
         codec_context->width, codec_context->height, codec_context->pix_fmt,
-        time_base.num, time_base.den
+        time_base.num, time_base.den,
+        color_space, color_primaries, color_transfer_characteristic, color_range
     );
 
     check(avfilter_graph_parse2(
