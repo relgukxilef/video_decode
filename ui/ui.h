@@ -50,6 +50,7 @@ struct ui {
     unique_command_pool command_pool;
     unique_device_memory streaming_memory;
 
+    unique_shader_module video_vertex, video_fragment;
     unique_pipeline_layout video_pipeline_layout;
     unique_pipeline video_pipeline;
 

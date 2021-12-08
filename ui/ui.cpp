@@ -2,6 +2,26 @@
 
 #include "../utility/out_ptr.h"
 
+extern uint32_t _binary_ui_video_vertex_glsl_spv_start;
+extern uint32_t _binary_ui_video_vertex_glsl_spv_end;
+extern uint32_t _binary_ui_video_fragment_glsl_spv_start;
+extern uint32_t _binary_ui_video_fragment_glsl_spv_end;
+
+void create_shader(
+    unique_device& device, uint32_t& begin, uint32_t& end,
+    unique_shader_module& module
+) {
+    VkShaderModuleCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = static_cast<size_t>((&end - &begin) * 4),
+        .pCode = &begin,
+    };
+
+    check(vkCreateShaderModule(
+        device.get(), &create_info, nullptr, out_ptr(module)
+    ));
+}
+
 image::image(ui& ui, view& view, VkImage image) {
     VkSemaphoreCreateInfo semaphore_info = {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -289,6 +309,15 @@ ui::ui(
             device.get(), &create_info, nullptr, out_ptr(command_pool)
         ));
     }
+
+    create_shader(
+        device, _binary_ui_video_vertex_glsl_spv_start,
+        _binary_ui_video_vertex_glsl_spv_end, video_vertex
+    );
+    create_shader(
+        device, _binary_ui_video_fragment_glsl_spv_start,
+        _binary_ui_video_fragment_glsl_spv_end, video_fragment
+    );
 
     VkPhysicalDeviceMemoryProperties memory_properties;
     vkGetPhysicalDeviceMemoryProperties(
