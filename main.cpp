@@ -246,11 +246,12 @@ int main() {
 
     ui ui(physical_device, surface.get());
 
-    while (!glfwWindowShouldClose(window.get())) {
-        glfwPollEvents();
+    ui.push_frame(f);
 
-        // TODO: swapchain doesn't necessarily sync with current monitor
-        // use VK_KHR_display to wait for vsync of current display
+    while (!glfwWindowShouldClose(window.get())) {
+        ui.render();
+
+        glfwWaitEventsTimeout(1000); // TODO: wait until next frame
     }
 
     return 0;

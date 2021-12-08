@@ -17,9 +17,18 @@ struct vulkan_device_lost : public std::runtime_error {
     vulkan_device_lost() : std::runtime_error("Device lost") {}
 };
 
+struct vulkan_stale_swapchain : public std::runtime_error {
+    vulkan_stale_swapchain() :
+        std::runtime_error("Swapchain suboptimal or out of date") {}
+};
+
 inline void check(VkResult success) {
     if (success == VK_SUCCESS) {
         return;
+    } else if (
+        success == VK_SUBOPTIMAL_KHR || success == VK_ERROR_OUT_OF_DATE_KHR
+    ) {
+        throw vulkan_stale_swapchain();
     } else if (success == VK_ERROR_OUT_OF_HOST_MEMORY) {
         throw vulkan_out_of_memory_error();
     } else if (success == VK_ERROR_DEVICE_LOST) {
@@ -55,6 +64,11 @@ inline void vulkan_delete_device(VkDevice* device) {
 
 inline void vulkan_delete_surface(VkSurfaceKHR* surface) {
     vkDestroySurfaceKHR(current_instance, *surface, nullptr);
+}
+
+inline void vulkan_wait_and_delete_fence(VkFence* fence) {
+    check(vkWaitForFences(current_device, 1, fence, VK_TRUE, ~0ul));
+    vkDestroyFence(current_device, *fence, nullptr);
 }
 
 template<typename T, auto Deleter>
@@ -103,7 +117,7 @@ typedef unique_vulkan_resource<VkRenderPass, vkDestroyRenderPass>
 typedef unique_vulkan_resource<VkCommandPool, vkDestroyCommandPool>
     unique_command_pool;
 
-typedef unique_vulkan_resource<VkFence, vkDestroyFence> unique_fence;
+typedef unique_resource<VkFence, vulkan_wait_and_delete_fence> unique_fence;
 
 typedef unique_vulkan_resource<VkSemaphore, vkDestroySemaphore>
     unique_semaphore;
