@@ -59,9 +59,9 @@ inline void vulkan_delete_surface(VkSurfaceKHR* surface) {
 
 inline void vulkan_wait_and_delete_fence(VkFence* fence) {
     VkResult result = vkWaitForFences(current_device, 1, fence, VK_TRUE, ~0ul);
-    if (result == VK_SUCCESS || result == VK_TIMEOUT)
-        vkDestroyFence(current_device, *fence, nullptr);
-    else
+    // fence needs to be cleaned up regardless of whether waiting succeeded
+    vkDestroyFence(current_device, *fence, nullptr);
+    if (result != VK_SUCCESS && result != VK_TIMEOUT)
         check(result);
 }
 
