@@ -58,8 +58,11 @@ inline void vulkan_delete_surface(VkSurfaceKHR* surface) {
 }
 
 inline void vulkan_wait_and_delete_fence(VkFence* fence) {
-    check(vkWaitForFences(current_device, 1, fence, VK_TRUE, ~0ul));
-    vkDestroyFence(current_device, *fence, nullptr);
+    VkResult result = vkWaitForFences(current_device, 1, fence, VK_TRUE, ~0ul);
+    if (result == VK_SUCCESS || result == VK_TIMEOUT)
+        vkDestroyFence(current_device, *fence, nullptr);
+    else
+        check(result);
 }
 
 template<typename T, auto Deleter>
