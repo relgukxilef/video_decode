@@ -18,15 +18,11 @@ struct image {
     VkCommandBuffer video_draw_command_buffer;
 };
 
-enum struct render_result {
-    good, bad_size,
-};
-
 struct view {
     view() = default;
     view(ui& ui);
 
-    render_result render(ui &ui);
+    VkResult render(ui &ui);
 
     unsigned image_count;
     VkSurfaceCapabilitiesKHR capabilities;

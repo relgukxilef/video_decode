@@ -144,7 +144,7 @@ view::view(ui& ui) {
     }
 }
 
-render_result view::render(ui& ui) {
+VkResult view::render(ui& ui) {
     uint32_t image_index;
     VkResult result = vkAcquireNextImageKHR(
         ui.device.get(), swapchain.get(), ~0ul,
@@ -152,7 +152,7 @@ render_result view::render(ui& ui) {
         VK_NULL_HANDLE, &image_index
     );
     if (result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_OUT_OF_DATE_KHR) {
-        return render_result::bad_size;
+        return result;
     }
     check(result);
 
@@ -193,11 +193,11 @@ render_result view::render(ui& ui) {
     };
     result = vkQueuePresentKHR(ui.present_queue, &present_info);
     if (result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_OUT_OF_DATE_KHR) {
-        return render_result::bad_size;
+        return result;
     }
     check(result);
 
-    return render_result::good;
+    return VK_SUCCESS;
 }
 
 ui::ui(
@@ -436,7 +436,8 @@ void ui::push_frame(const frame &f) {
 }
 
 void ui::render() {
-    if (view.render(*this) != render_result::good) {
+    VkResult result = view.render(*this);
+    if (result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_OUT_OF_DATE_KHR) {
         view = {}; // delete first
         view = ::view(*this);
 
