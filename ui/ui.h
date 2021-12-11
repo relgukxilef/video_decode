@@ -35,6 +35,7 @@ struct view {
 };
 
 struct ui {
+    ui() = default;
     ui(VkPhysicalDevice physical_device, VkSurfaceKHR surface);
 
     void push_frame(const frame& f);

@@ -249,7 +249,16 @@ int main() {
     ui.push_frame(f);
 
     while (!glfwWindowShouldClose(window.get())) {
-        ui.render();
+        try {
+            ui.render();
+
+        } catch (vulkan_device_lost) {
+            // create a new ui
+            {
+                ::ui old = std::move(ui); // delete first
+            }
+            ui = ::ui(physical_device, surface.get());
+        }
 
         glfwWaitEventsTimeout(1000); // TODO: wait until next frame
     }
