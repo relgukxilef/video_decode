@@ -144,13 +144,17 @@ view::view(ui& ui) {
     }
 }
 
-void view::render(ui& ui) {
+render_result view::render(ui& ui) {
     uint32_t image_index;
-    check(vkAcquireNextImageKHR(
+    VkResult result = vkAcquireNextImageKHR(
         ui.device.get(), swapchain.get(), ~0ul,
         ui.swapchain_image_ready_semaphore.get(),
         VK_NULL_HANDLE, &image_index
-    ));
+    );
+    if (result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_OUT_OF_DATE_KHR) {
+        return render_result::bad_size;
+    }
+    check(result);
 
     check(vkWaitForFences(
         ui.device.get(), 1, &images[image_index].render_finished_fence.get(),
@@ -187,7 +191,13 @@ void view::render(ui& ui) {
         .pSwapchains = &swapchain.get(),
         .pImageIndices = &image_index,
     };
-    check(vkQueuePresentKHR(ui.present_queue, &present_info));
+    result = vkQueuePresentKHR(ui.present_queue, &present_info);
+    if (result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_OUT_OF_DATE_KHR) {
+        return render_result::bad_size;
+    }
+    check(result);
+
+    return render_result::good;
 }
 
 ui::ui(
@@ -426,10 +436,7 @@ void ui::push_frame(const frame &f) {
 }
 
 void ui::render() {
-    try {
-        view.render(*this);
-
-    } catch (vulkan_stale_swapchain) {
+    if (view.render(*this) != render_result::good) {
         view = {}; // delete first
         view = ::view(*this);
 

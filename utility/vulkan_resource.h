@@ -17,18 +17,9 @@ struct vulkan_device_lost : public std::runtime_error {
     vulkan_device_lost() : std::runtime_error("Device lost") {}
 };
 
-struct vulkan_stale_swapchain : public std::runtime_error {
-    vulkan_stale_swapchain() :
-        std::runtime_error("Swapchain suboptimal or out of date") {}
-};
-
 inline void check(VkResult success) {
     if (success == VK_SUCCESS) {
         return;
-    } else if (
-        success == VK_SUBOPTIMAL_KHR || success == VK_ERROR_OUT_OF_DATE_KHR
-    ) {
-        throw vulkan_stale_swapchain();
     } else if (success == VK_ERROR_OUT_OF_HOST_MEMORY) {
         throw vulkan_out_of_memory_error();
     } else if (success == VK_ERROR_DEVICE_LOST) {
