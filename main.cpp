@@ -252,7 +252,7 @@ int main() {
         try {
             ui.render();
 
-        } catch (vulkan_device_lost) {
+        } catch (vulkan_device_lost&) {
             // create a new ui
             {
                 ::ui old = std::move(ui); // delete first
