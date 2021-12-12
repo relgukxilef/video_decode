@@ -13,8 +13,12 @@ struct image {
     image() = default;
     image(ui& ui, view& view, VkImage image);
 
+    unique_framebuffer swapchain_framebuffer;
+    unique_image_view swapchain_image_view;
+
     unique_semaphore render_finished_semaphore;
     unique_fence render_finished_fence;
+
     VkCommandBuffer video_draw_command_buffer;
 };
 
@@ -49,12 +53,18 @@ struct ui {
     unique_command_pool command_pool;
     unique_device_memory streaming_memory;
 
-    unique_shader_module video_vertex, video_fragment;
-    unique_pipeline_layout video_pipeline_layout;
-    unique_pipeline video_pipeline;
-
     unique_image video_image;
     unique_image_view video_image_view;
+    unique_sampler video_sampler;
+
+    unique_descriptor_set_layout descriptor_set_layout;
+    unique_descriptor_pool descriptor_pool;
+    VkDescriptorSet descriptor_set;
+
+    unique_render_pass render_pass;
+
+    unique_pipeline_layout video_pipeline_layout;
+    unique_pipeline video_pipeline;
 
     uint8_t* video_buffer;
 

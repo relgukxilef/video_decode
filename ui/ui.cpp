@@ -23,21 +23,64 @@ void create_shader(
 }
 
 image::image(ui& ui, view& view, VkImage image) {
-    VkSemaphoreCreateInfo semaphore_info = {
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-    };
-    check(vkCreateSemaphore(
-        ui.device.get(), &semaphore_info, nullptr,
-        out_ptr(render_finished_semaphore)
-    ));
+     {
+        VkSemaphoreCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        };
+        check(vkCreateSemaphore(
+            ui.device.get(), &create_info, nullptr,
+            out_ptr(render_finished_semaphore)
+        ));
+    }
 
-    VkFenceCreateInfo fence_info = {
-        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
-    };
-    check(vkCreateFence(
-        ui.device.get(), &fence_info, nullptr, out_ptr(render_finished_fence)
-    ));
+    {
+        VkFenceCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+        };
+        check(vkCreateFence(
+            ui.device.get(), &create_info, nullptr, out_ptr(render_finished_fence)
+        ));
+    }
+
+    {
+        VkImageViewCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = image,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = ui.surface_format.format,
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+        check(vkCreateImageView(
+            ui.device.get(), &create_info, nullptr,
+            out_ptr(swapchain_image_view)
+        ));
+    }
+
+    {
+        auto attachments = {
+            swapchain_image_view.get(),
+        };
+        VkFramebufferCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+            .renderPass = ui.render_pass.get(),
+            .attachmentCount = static_cast<uint32_t>(attachments.size()),
+            .pAttachments = attachments.begin(),
+            .width = view.extent.width,
+            .height = view.extent.height,
+            .layers = 1,
+        };
+        check(vkCreateFramebuffer(
+            ui.device.get(), &create_info, nullptr,
+            out_ptr(swapchain_framebuffer)
+        ));
+    }
 
     VkCommandBufferAllocateInfo command_buffer_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -54,29 +97,41 @@ image::image(ui& ui, view& view, VkImage image) {
     };
     check(vkBeginCommandBuffer(video_draw_command_buffer, &begin_info));
 
-    VkImageMemoryBarrier barrier = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT,
-        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
-        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image = image,
-        .subresourceRange = {
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
+    auto clear_values = {
+        VkClearValue{
+            .color = {{0.0f, 0.0f, 0.0f, 1.0f}},
         },
     };
-    vkCmdPipelineBarrier(
-        video_draw_command_buffer,
-        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-        VK_DEPENDENCY_BY_REGION_BIT,
-        0, nullptr, 0, nullptr, 1, &barrier
+
+    VkRenderPassBeginInfo render_pass_begin_info = {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .renderPass = ui.render_pass.get(),
+        .framebuffer = swapchain_framebuffer.get(),
+        .renderArea = {
+            .offset = {0, 0}, .extent = view.extent,
+        },
+        .clearValueCount = static_cast<uint32_t>(clear_values.size()),
+        .pClearValues = clear_values.begin(),
+    };
+
+    vkCmdBeginRenderPass(
+        video_draw_command_buffer, &render_pass_begin_info,
+        VK_SUBPASS_CONTENTS_INLINE
     );
+
+    vkCmdBindPipeline(
+        video_draw_command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        ui.video_pipeline.get()
+    );
+
+    vkCmdBindDescriptorSets(
+        video_draw_command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        ui.video_pipeline_layout.get(), 0, 1, &ui.descriptor_set, 0, nullptr
+    );
+
+    vkCmdDraw(video_draw_command_buffer, 6, 1, 0, 0);
+
+    vkCmdEndRenderPass(video_draw_command_buffer);
 
     check(vkEndCommandBuffer(video_draw_command_buffer));
 }
@@ -320,6 +375,7 @@ ui::ui(
         ));
     }
 
+    unique_shader_module video_vertex, video_fragment;
     create_shader(
         device, _binary_ui_video_vertex_glsl_spv_start,
         _binary_ui_video_vertex_glsl_spv_end, video_vertex
@@ -398,6 +454,64 @@ ui::ui(
     }
 
     {
+        // transition image from undefined to general layout
+        VkCommandBuffer command_buffer;
+
+        VkCommandBufferAllocateInfo allocate_info = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = command_pool.get(),
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+        check(vkAllocateCommandBuffers(
+            device.get(), &allocate_info, &command_buffer
+        ));
+
+        VkCommandBufferBeginInfo begin_info = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        };
+
+        check(vkBeginCommandBuffer(command_buffer, &begin_info));
+
+        VkImageMemoryBarrier image_memory_barrier = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = video_image.get(),
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+
+        vkCmdPipelineBarrier(
+            command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+            &image_memory_barrier
+        );
+
+        check(vkEndCommandBuffer(command_buffer));
+
+        VkSubmitInfo submit_info = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &command_buffer,
+        };
+        check(vkQueueSubmit(graphics_queue, 1, &submit_info, VK_NULL_HANDLE));
+        check(vkQueueWaitIdle(graphics_queue)); // TODO: use fence instead
+        // TODO: use destructor instead
+        vkFreeCommandBuffers(
+            device.get(), command_pool.get(), 1, &command_buffer
+        );
+    }
+
+    {
         VkImageViewCreateInfo create_info = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
             .image = video_image.get(),
@@ -417,6 +531,230 @@ ui::ui(
     }
 
     {
+        VkDescriptorSetLayoutBinding descriptor_set_layout_binding = {
+            .binding = 0,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+        };
+        VkDescriptorSetLayoutCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = 1,
+            .pBindings = &descriptor_set_layout_binding,
+        };
+        check(vkCreateDescriptorSetLayout(
+            device.get(), &create_info,
+            nullptr, out_ptr(descriptor_set_layout)
+        ));
+    }
+
+    {
+        VkDescriptorPoolSize pool_size = {
+            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = 1,
+        };
+        VkDescriptorPoolCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .maxSets = 1,
+            .poolSizeCount = 1,
+            .pPoolSizes = &pool_size,
+        };
+        check(vkCreateDescriptorPool(
+            device.get(), &create_info, nullptr, out_ptr(descriptor_pool))
+        );
+    }
+
+    {
+        VkDescriptorSetAllocateInfo descriptor_set_allocate_info = {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = descriptor_pool.get(),
+            .descriptorSetCount = 1,
+            .pSetLayouts = &descriptor_set_layout.get(),
+        };
+        check(vkAllocateDescriptorSets(
+            device.get(), &descriptor_set_allocate_info, &descriptor_set
+        ));
+    }
+
+    {
+        VkSamplerCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = VK_FILTER_LINEAR,
+            .minFilter = VK_FILTER_LINEAR,
+            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+            .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .anisotropyEnable = VK_FALSE,
+        };
+        check(vkCreateSampler(
+            device.get(), &create_info, nullptr, out_ptr(video_sampler)
+        ));
+    }
+
+    {
+        VkDescriptorImageInfo descriptor_buffer_info = {
+            .sampler = video_sampler.get(),
+            .imageView = video_image_view.get(),
+            .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+        };
+        VkWriteDescriptorSet write_descriptor_set = {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = descriptor_set,
+            .dstBinding = 0,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .pImageInfo = &descriptor_buffer_info,
+        };
+        vkUpdateDescriptorSets(
+            device.get(), 1, &write_descriptor_set, 0, nullptr
+        );
+    }
+
+    {
+        VkPipelineLayoutCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = 1,
+            .pSetLayouts = &descriptor_set_layout.get(),
+        };
+        check(vkCreatePipelineLayout(
+            device.get(), &create_info, nullptr, out_ptr(video_pipeline_layout)
+        ));
+    }
+
+    {
+        auto attachments = {
+            VkAttachmentDescription{
+                .format = surface_format.format,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            },
+        };
+        auto attachment_references = {
+            VkAttachmentReference{
+                .attachment = 0,
+                .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            },
+        };
+        auto subpasses = {
+            VkSubpassDescription{
+                .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+                .colorAttachmentCount =
+                    static_cast<uint32_t>(attachment_references.size()),
+                .pColorAttachments = attachment_references.begin(),
+            },
+        };
+        auto subpass_dependencies = {
+            VkSubpassDependency{
+                .srcSubpass = VK_SUBPASS_EXTERNAL,
+                .dstSubpass = 0,
+                .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                .srcAccessMask = 0,
+                .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            },
+        };
+        VkRenderPassCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+            .attachmentCount = static_cast<uint32_t>(attachments.size()),
+            .pAttachments = attachments.begin(),
+            .subpassCount = static_cast<uint32_t>(subpasses.size()),
+            .pSubpasses = subpasses.begin(),
+            .dependencyCount =
+                static_cast<uint32_t>(subpass_dependencies.size()),
+            .pDependencies = subpass_dependencies.begin(),
+        };
+        check(vkCreateRenderPass(
+            device.get(), &create_info, nullptr, out_ptr(render_pass)
+        ));
+    }
+
+    {
+        auto shader_stages = {
+            VkPipelineShaderStageCreateInfo{
+                .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .stage = VK_SHADER_STAGE_VERTEX_BIT,
+                .module = video_vertex.get(),
+                .pName = "main",
+            }, VkPipelineShaderStageCreateInfo{
+                .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+                .module = video_fragment.get(),
+                .pName = "main",
+            },
+        };
+        VkPipelineVertexInputStateCreateInfo pipeline_vertex_input_state = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        };
+        VkPipelineInputAssemblyStateCreateInfo pipeline_input_assembly_state = {
+            .sType =
+                VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+            .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+            .primitiveRestartEnable = VK_FALSE,
+        };
+        VkViewport viewport = {
+            .x = 0.0f, .y = 0.0f,
+            .width = 1280.0f, .height = 720.0f,
+            .minDepth = 0.0f, .maxDepth = 1.0f,
+        };
+        VkRect2D scissor = {.offset = {0, 0}, .extent = {1280, 720},};
+        VkPipelineViewportStateCreateInfo pipeline_viewport_state = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+            .viewportCount = 1,
+            .pViewports = &viewport,
+            .scissorCount = 1,
+            .pScissors = &scissor,
+        };
+        VkPipelineRasterizationStateCreateInfo pipeline_rasterization_state = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            .polygonMode = VK_POLYGON_MODE_FILL,
+            .lineWidth = 1.0f, // required, even when not doing line rendering
+        };
+        VkPipelineMultisampleStateCreateInfo pipeline_multisample_state = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+            .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+        };
+        auto pipeline_color_blend_attachment_states = {
+            VkPipelineColorBlendAttachmentState{
+                .colorWriteMask =
+                    VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                    VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+            },
+        };
+        VkPipelineColorBlendStateCreateInfo pipeline_color_blend_state = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            .attachmentCount = static_cast<uint32_t>(
+                pipeline_color_blend_attachment_states.size()
+            ),
+            .pAttachments = pipeline_color_blend_attachment_states.begin(),
+            .blendConstants = {0.0f, 0.0f, 0.0f, 0.0f},
+        };
+        VkGraphicsPipelineCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+            .stageCount = static_cast<uint32_t>(shader_stages.size()),
+            .pStages = shader_stages.begin(),
+            .pVertexInputState = &pipeline_vertex_input_state,
+            .pInputAssemblyState = &pipeline_input_assembly_state,
+            .pViewportState = &pipeline_viewport_state,
+            .pRasterizationState = &pipeline_rasterization_state,
+            .pMultisampleState = &pipeline_multisample_state,
+            .pColorBlendState = &pipeline_color_blend_state,
+            .layout = video_pipeline_layout.get(),
+            .renderPass = render_pass.get(),
+        };
+        check(vkCreateGraphicsPipelines(
+            device.get(), nullptr, 1, &create_info, nullptr,
+            out_ptr(video_pipeline)
+        ));
+    }
+
+    {
         VkSemaphoreCreateInfo create_info = {
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
         };
@@ -430,9 +768,16 @@ ui::ui(
 }
 
 void ui::push_frame(const frame &f) {
-    std::move(
-        f.pixels.y.get(), f.pixels.y.get() + f.width * f.height, video_buffer
-    );
+    uint8_t* source_row = f.pixels.y.get();
+    uint8_t* destination_row = video_buffer;
+    for (auto y = 0u; y < f.height; y++) {
+        std::move(
+            source_row, source_row + f.width,
+            destination_row
+        );
+        source_row += f.width;
+        destination_row += 1024; // TODO
+    }
 }
 
 void ui::render() {

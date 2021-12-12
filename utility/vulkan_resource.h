@@ -98,6 +98,9 @@ typedef unique_vulkan_resource<VkImage, vkDestroyImage> unique_image;
 typedef unique_vulkan_resource<VkImageView, vkDestroyImageView>
     unique_image_view;
 
+typedef unique_vulkan_resource<VkSampler, vkDestroySampler>
+    unique_sampler;
+
 typedef unique_vulkan_resource<VkPipelineLayout, vkDestroyPipelineLayout>
     unique_pipeline_layout;
 
