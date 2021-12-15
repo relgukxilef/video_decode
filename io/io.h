@@ -1,13 +1,19 @@
 #pragma once
 
+#include <vector>
+
 #include "../utility/av_resource.h"
 #include "../data/frame.h"
+
+struct chunk {
+    std::vector<frame> frames;
+};
 
 struct file {
     file(const char* filename);
 
     // TODO: return multiple frames if they are encoded together
-    frame get_frame();
+    chunk get_frame(uint64_t milliseconds);
 
     unique_av_format_context format_context;
     struct AVCodec* codec;

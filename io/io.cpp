@@ -15,6 +15,49 @@ extern "C" {
 
 #include "../utility/out_ptr.h"
 
+frame to_frame(AVFrame* av_frame, AVRational time_base) {
+    uint16_t width = av_frame->width, height = av_frame->height;
+    uint64_t milliseconds =
+        av_frame->pts * time_base.num * 1000 / time_base.den;
+
+    auto
+        y = std::make_unique<uint8_t[]>(width * height),
+        cb = std::make_unique<uint8_t[]>(width / 2 * height / 2),
+        cr = std::make_unique<uint8_t[]>(width / 2 * height / 2);
+
+    uint8_t* av_row = av_frame->data[0];
+    uint8_t* frame_row = y.get();
+    for (auto row = 0u; row < height; row++) {
+        std::move(av_row, av_row + width, frame_row);
+        av_row += av_frame->linesize[0];
+        frame_row += width;
+    }
+    av_row = av_frame->data[1];
+    frame_row = cb.get();
+    for (auto row = 0u; row < height / 2; row++) {
+        std::move(av_row, av_row + width / 2, frame_row);
+        av_row += av_frame->linesize[1];
+        frame_row += width / 2;
+    }
+    av_row = av_frame->data[2];
+    frame_row = cr.get();
+    for (auto row = 0u; row < height / 2; row++) {
+        std::move(av_row, av_row + width / 2, frame_row);
+        av_row += av_frame->linesize[1];
+        frame_row += width / 2;
+    }
+
+    return frame{
+        .pixels = {
+            .y = std::move(y),
+            .cb = std::move(cb),
+            .cr = std::move(cr),
+        },
+        .width = width,
+        .height = height,
+    };
+}
+
 file::file(const char *filename) {
     // demuxer
     check(avformat_open_input(
@@ -96,71 +139,45 @@ file::file(const char *filename) {
     packet = av_packet_alloc();
 }
 
-frame file::get_frame() {
-    // 32 seconds into the video
+chunk file::get_frame(uint64_t milliseconds) {
+    chunk chunk;
+
     AVRational time_base = format_context->streams[stream_index]->time_base;
+    int64_t timestamp = milliseconds * time_base.den / 1000 / time_base.num;
     check(av_seek_frame(
-        format_context.get(), stream_index, 32 * time_base.den / time_base.num,
-        0
+        format_context.get(), stream_index, timestamp, AVSEEK_FLAG_BACKWARD
     ));
+
+    // read first frame, it'll be a keyframe
+    do {
+        check(av_read_frame(format_context.get(), packet.get()));
+    } while (packet->stream_index != stream_index);
 
     int result;
     do {
-        do {
-            check(av_read_frame(format_context.get(), packet.get()));
-        } while (packet->stream_index != stream_index);
-
         check(avcodec_send_packet(codec_context.get(), packet.get()));
         av_packet_unref(packet.get());
 
         // 1 packet may contain 0, 1 or more frames
         result = avcodec_receive_frame(codec_context.get(), av_frame.get());
-        // TODO: handle more frames
-
-        if (result == 0) {
+        while (result == 0) {
             check(av_buffersrc_add_frame(source_context, av_frame.get()));
             check(av_buffersink_get_frame(sink_context, av_frame.get()));
+
+            chunk.frames.push_back(to_frame(av_frame.get(), time_base));
+
+            result = avcodec_receive_frame(codec_context.get(), av_frame.get());
         }
-    } while(result == AVERROR(EAGAIN) || result == AVERROR_EOF);
 
-    check(result);
+        if (result != AVERROR(EAGAIN))
+            check(result);
 
-    unsigned width = av_frame->width, height = av_frame->height;
+        // read next frame, stop when it's another keyframe
+        do {
+            check(av_read_frame(format_context.get(), packet.get()));
+        } while (packet->stream_index != stream_index);
 
-    auto
-        y = std::make_unique<uint8_t[]>(width * height),
-        cb = std::make_unique<uint8_t[]>(width / 2 * height / 2),
-        cr = std::make_unique<uint8_t[]>(width / 2 * height / 2);
+    } while (result == AVERROR(EAGAIN) && packet->flags != AV_PKT_FLAG_KEY);
 
-    uint8_t* av_row = av_frame->data[0];
-    uint8_t* frame_row = y.get();
-    for (auto row = 0u; row < height; row++) {
-        std::move(av_row, av_row + width, frame_row);
-        av_row += av_frame->linesize[0];
-        frame_row += width;
-    }
-    av_row = av_frame->data[1];
-    frame_row = cb.get();
-    for (auto row = 0u; row < height / 2; row++) {
-        std::move(av_row, av_row + width / 2, frame_row);
-        av_row += av_frame->linesize[1];
-        frame_row += width / 2;
-    }
-    av_row = av_frame->data[2];
-    frame_row = cr.get();
-    for (auto row = 0u; row < height / 2; row++) {
-        std::move(av_row, av_row + width / 2, frame_row);
-        av_row += av_frame->linesize[1];
-        frame_row += width / 2;
-    }
-
-    return frame{
-        .pixels = {
-            .y = std::move(y),
-            .cb = std::move(cb),
-            .cr = std::move(cr),
-        },
-        .width = width,
-        .height = height,
-    };
+    return chunk;
 }

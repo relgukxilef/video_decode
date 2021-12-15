@@ -12,6 +12,7 @@
 
 #include "io/io.h"
 #include "ui/ui.h"
+#include "data/frame.h"
 #include "utility/vulkan_resource.h"
 #include "utility/out_ptr.h"
 
@@ -60,8 +61,6 @@ int main() {
     const char* filename = "file:test.mkv";
 
     file video(filename);
-
-    frame f = video.get_frame();
 
     unique_glfw glfw;
 
@@ -246,7 +245,9 @@ int main() {
 
     ui ui(physical_device, surface.get());
 
-    ui.push_frame(f);
+    chunk chunk = video.get_frame(32 * 1000);
+
+    ui.push_frame(chunk.frames[0]);
 
     while (!glfwWindowShouldClose(window.get())) {
         try {
