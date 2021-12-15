@@ -53,6 +53,7 @@ frame to_frame(AVFrame* av_frame, AVRational time_base) {
             .cb = std::move(cb),
             .cr = std::move(cr),
         },
+        .time = milliseconds,
         .width = width,
         .height = height,
     };

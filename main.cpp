@@ -13,6 +13,7 @@
 #include "io/io.h"
 #include "ui/ui.h"
 #include "data/frame.h"
+#include "data/frame_cache.h"
 #include "utility/vulkan_resource.h"
 #include "utility/out_ptr.h"
 
@@ -247,9 +248,23 @@ int main() {
 
     chunk chunk = video.get_frame(32 * 1000);
 
-    ui.push_frame(chunk.frames[0]);
+    frame_cache cache;
+
+    for (auto& frame : chunk.frames) {
+        cache.put_frame({&video, frame.time, 0}, std::move(frame));
+    }
 
     while (!glfwWindowShouldClose(window.get())) {
+
+        double cursor_x, cursor_y;
+        glfwGetCursorPos(window.get(), &cursor_x, &cursor_y);
+
+        auto f = cache.get_frame(
+            { &video, static_cast<uint64_t>(cursor_x + 32 * 1000), 0 }
+        );
+        if (f != nullptr)
+            ui.push_frame(*f);
+
         try {
             ui.render();
 
@@ -261,7 +276,7 @@ int main() {
             ui = ::ui(physical_device, surface.get());
         }
 
-        glfwWaitEventsTimeout(1000); // TODO: wait until next frame
+        glfwPollEvents();
     }
 
     return 0;

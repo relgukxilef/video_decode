@@ -14,6 +14,7 @@ add_executable(
     utility/vulkan_resource.h utility/vulkan_resource.cpp
     utility/out_ptr.h
     data/frame.h data/frame.cpp
+    data/frame_cache.h data/frame_cache.cpp
     ui/ui.h ui/ui.cpp
 )
 
