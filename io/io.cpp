@@ -95,17 +95,16 @@ file::file(const char *filename) {
 
     auto color_space = codec_context->colorspace;
     if (color_space == AVCOL_SPC_UNSPECIFIED)
-        color_space = AVCOL_SPC_BT709;
+        color_space = AVCOL_SPC_BT470BG;
     auto color_primaries = codec_context->color_primaries;
     if (color_primaries == AVCOL_PRI_UNSPECIFIED)
-        color_primaries = AVCOL_PRI_BT709;
+        color_primaries = AVCOL_PRI_BT470BG;
     auto color_transfer_characteristic = codec_context->color_trc;
     if (color_transfer_characteristic == AVCOL_TRC_UNSPECIFIED)
-        color_transfer_characteristic = AVCOL_TRC_BT709;
+        color_transfer_characteristic = AVCOL_TRC_SMPTE170M;
     auto color_range = codec_context->color_range;
     if (color_range == AVCOL_RANGE_UNSPECIFIED)
         color_range = AVCOL_RANGE_MPEG;
-
     AVRational time_base = format_context->streams[stream_index]->time_base;
     // filter parameters are stringly typed
     // TODO: use codec_context->sample_aspect_ratio
@@ -114,7 +113,7 @@ file::file(const char *filename) {
     std::snprintf(
         filter, sizeof(filter),
         "buffer=video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=1/1,"
-        "colorspace=all=bt709:trc=srgb:format=yuv420p:range=pc:"
+        "colorspace=all=bt709:trc=bt709:format=yuv420p:range=jpeg:"
         "ispace=%d:iprimaries=%d:itrc=%d:irange=%d,"
         "buffersink",
         codec_context->width, codec_context->height, codec_context->pix_fmt,

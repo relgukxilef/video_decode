@@ -38,6 +38,16 @@ struct view {
     std::unique_ptr<image[]> images;
 };
 
+struct dynamic_image {
+    dynamic_image() = default;
+    dynamic_image(ui& ui, unsigned size);
+
+    unique_device_memory device_memory;
+    unique_image image;
+    unique_image_view image_view;
+    uint8_t* buffer;
+};
+
 struct ui {
     ui() = default;
     ui(VkPhysicalDevice physical_device, VkSurfaceKHR surface);
@@ -51,10 +61,11 @@ struct ui {
     unique_device device;
     VkQueue graphics_queue, present_queue;
     unique_command_pool command_pool;
-    unique_device_memory streaming_memory;
 
-    unique_image video_image;
-    unique_image_view video_image_view;
+    dynamic_image video_y;
+    dynamic_image video_cb;
+    dynamic_image video_cr;
+
     unique_sampler video_sampler;
 
     unique_descriptor_set_layout descriptor_set_layout;
@@ -66,13 +77,12 @@ struct ui {
     unique_pipeline_layout video_pipeline_layout;
     unique_pipeline video_pipeline;
 
-    uint8_t* video_buffer;
-
     unique_semaphore swapchain_image_ready_semaphore;
 
     view view;
 
     uint32_t graphics_queue_family = -1u, present_queue_family = -1u;
     VkSurfaceFormatKHR surface_format;
+    VkPhysicalDeviceMemoryProperties memory_properties;
 };
 

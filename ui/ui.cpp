@@ -7,6 +7,154 @@ extern uint32_t _binary_ui_video_vertex_glsl_spv_end;
 extern uint32_t _binary_ui_video_fragment_glsl_spv_start;
 extern uint32_t _binary_ui_video_fragment_glsl_spv_end;
 
+dynamic_image::dynamic_image(ui &ui, unsigned size) {
+    {
+        unsigned width = size, height = size;
+        VkImageCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = VK_IMAGE_TYPE_2D,
+            .format = VK_FORMAT_R8_UNORM,
+            .extent = {
+                .width = width,
+                .height = height,
+                .depth = 1,
+            },
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VK_IMAGE_TILING_LINEAR,
+            .usage =
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        };
+        check(vkCreateImage(
+            ui.device.get(), &create_info, nullptr, out_ptr(image)
+        ));
+        VkMemoryRequirements memory_requirements;
+        vkGetImageMemoryRequirements(
+            ui.device.get(), image.get(), &memory_requirements
+        );
+
+        uint32_t memory_type = 0;
+        VkMemoryPropertyFlags properties =
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+        for (uint32_t i = 0; i < ui.memory_properties.memoryTypeCount; i++) {
+            if (
+                (memory_requirements.memoryTypeBits & (1 << i)) &&
+                (
+                    ui.memory_properties.memoryTypes[i].propertyFlags &
+                    properties
+                ) == properties
+            ) {
+                memory_type = i;
+                break;
+            }
+        }
+
+        VkMemoryAllocateInfo allocate_info = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = memory_requirements.size,
+            .memoryTypeIndex = memory_type,
+        };
+        check(vkAllocateMemory(
+            ui.device.get(), &allocate_info, nullptr,
+            out_ptr(device_memory)
+        ));
+
+        check(vkBindImageMemory(
+            ui.device.get(), image.get(), device_memory.get(), 0
+        ));
+
+        check(vkMapMemory(
+            ui.device.get(), device_memory.get(), 0, width * height, 0,
+            reinterpret_cast<void**>(&buffer)
+        ));
+    }
+
+    {
+        // transition image from undefined to general layout
+        VkCommandBuffer command_buffer;
+
+        VkCommandBufferAllocateInfo allocate_info = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = ui.command_pool.get(),
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+        check(vkAllocateCommandBuffers(
+            ui.device.get(), &allocate_info, &command_buffer
+        ));
+
+        VkCommandBufferBeginInfo begin_info = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        };
+
+        check(vkBeginCommandBuffer(command_buffer, &begin_info));
+
+        VkImageMemoryBarrier image_memory_barrier = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = image.get(),
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+
+        vkCmdPipelineBarrier(
+            command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+            &image_memory_barrier
+        );
+
+        check(vkEndCommandBuffer(command_buffer));
+
+        VkSubmitInfo submit_info = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &command_buffer,
+        };
+        check(vkQueueSubmit(
+            ui.graphics_queue, 1, &submit_info, VK_NULL_HANDLE
+        ));
+        check(vkQueueWaitIdle(ui.graphics_queue)); // TODO: use fence instead
+        // TODO: use destructor instead
+        vkFreeCommandBuffers(
+            ui.device.get(), ui.command_pool.get(), 1, &command_buffer
+        );
+    }
+
+    {
+        VkImageViewCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = image.get(),
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = VK_FORMAT_R8_UNORM,
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+        check(vkCreateImageView(
+            ui.device.get(), &create_info, nullptr, out_ptr(image_view)
+        ));
+    }
+
+}
+
 void create_shader(
     unique_device& device, uint32_t& begin, uint32_t& end,
     unique_shader_module& module
@@ -385,162 +533,38 @@ ui::ui(
         _binary_ui_video_fragment_glsl_spv_end, video_fragment
     );
 
-    VkPhysicalDeviceMemoryProperties memory_properties;
     vkGetPhysicalDeviceMemoryProperties(
         physical_device, &memory_properties
     );
 
+    video_y = dynamic_image(*this, 1024);
+    video_cb = dynamic_image(*this, 512);
+    video_cr = dynamic_image(*this, 512);
+
     {
-        unsigned width = 1024, height = 1024;
-        VkImageCreateInfo create_info = {
-            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-            .imageType = VK_IMAGE_TYPE_2D,
-            .format = VK_FORMAT_R8_SRGB,
-            .extent = {
-                .width = width,
-                .height = height,
-                .depth = 1,
+        auto descriptor_set_layout_binding = {
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            }, {
+                .binding = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            }, {
+                .binding = 2,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
             },
-            .mipLevels = 1,
-            .arrayLayers = 1,
-            .samples = VK_SAMPLE_COUNT_1_BIT,
-            .tiling = VK_IMAGE_TILING_LINEAR,
-            .usage =
-                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        };
-        check(vkCreateImage(
-            device.get(), &create_info, nullptr, out_ptr(video_image)
-        ));
-        VkMemoryRequirements memory_requirements;
-        vkGetImageMemoryRequirements(
-            device.get(), video_image.get(), &memory_requirements
-        );
-
-        uint32_t memory_type = 0;
-        VkMemoryPropertyFlags properties =
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-
-        for (uint32_t i = 0; i < memory_properties.memoryTypeCount; i++) {
-            if (
-                (memory_requirements.memoryTypeBits & (1 << i)) &&
-                (memory_properties.memoryTypes[i].propertyFlags & properties) ==
-                properties
-            ) {
-                memory_type = i;
-                break;
-            }
-        }
-
-        VkMemoryAllocateInfo allocate_info = {
-            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .allocationSize = memory_requirements.size,
-            .memoryTypeIndex = memory_type,
-        };
-        check(vkAllocateMemory(
-            device.get(), &allocate_info, nullptr, out_ptr(streaming_memory)
-        ));
-
-        check(vkBindImageMemory(
-            device.get(), video_image.get(), streaming_memory.get(), 0
-        ));
-
-        check(vkMapMemory(
-            device.get(), streaming_memory.get(), 0, width * height, 0,
-            reinterpret_cast<void**>(&video_buffer)
-        ));
-    }
-
-    {
-        // transition image from undefined to general layout
-        VkCommandBuffer command_buffer;
-
-        VkCommandBufferAllocateInfo allocate_info = {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .commandPool = command_pool.get(),
-            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandBufferCount = 1,
-        };
-        check(vkAllocateCommandBuffers(
-            device.get(), &allocate_info, &command_buffer
-        ));
-
-        VkCommandBufferBeginInfo begin_info = {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-        };
-
-        check(vkBeginCommandBuffer(command_buffer, &begin_info));
-
-        VkImageMemoryBarrier image_memory_barrier = {
-            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = video_image.get(),
-            .subresourceRange = {
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1,
-            },
-        };
-
-        vkCmdPipelineBarrier(
-            command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-            &image_memory_barrier
-        );
-
-        check(vkEndCommandBuffer(command_buffer));
-
-        VkSubmitInfo submit_info = {
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &command_buffer,
-        };
-        check(vkQueueSubmit(graphics_queue, 1, &submit_info, VK_NULL_HANDLE));
-        check(vkQueueWaitIdle(graphics_queue)); // TODO: use fence instead
-        // TODO: use destructor instead
-        vkFreeCommandBuffers(
-            device.get(), command_pool.get(), 1, &command_buffer
-        );
-    }
-
-    {
-        VkImageViewCreateInfo create_info = {
-            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .image = video_image.get(),
-            .viewType = VK_IMAGE_VIEW_TYPE_2D,
-            .format = VK_FORMAT_R8_SRGB,
-            .subresourceRange = {
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1,
-            },
-        };
-        check(vkCreateImageView(
-            device.get(), &create_info, nullptr, out_ptr(video_image_view)
-        ));
-    }
-
-    {
-        VkDescriptorSetLayoutBinding descriptor_set_layout_binding = {
-            .binding = 0,
-            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = 1,
-            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
         };
         VkDescriptorSetLayoutCreateInfo create_info = {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = 1,
-            .pBindings = &descriptor_set_layout_binding,
+            .bindingCount =
+                static_cast<uint32_t>(descriptor_set_layout_binding.size()),
+            .pBindings = descriptor_set_layout_binding.begin(),
         };
         check(vkCreateDescriptorSetLayout(
             device.get(), &create_info,
@@ -593,19 +617,30 @@ ui::ui(
     }
 
     {
-        VkDescriptorImageInfo descriptor_buffer_info = {
-            .sampler = video_sampler.get(),
-            .imageView = video_image_view.get(),
-            .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+        auto descriptor_buffer_info = {
+            VkDescriptorImageInfo{
+                .sampler = video_sampler.get(),
+                .imageView = video_y.image_view.get(),
+                .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+            }, {
+                .sampler = video_sampler.get(),
+                .imageView = video_cb.image_view.get(),
+                .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+            }, {
+                .sampler = video_sampler.get(),
+                .imageView = video_cr.image_view.get(),
+                .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+            },
         };
         VkWriteDescriptorSet write_descriptor_set = {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstSet = descriptor_set,
             .dstBinding = 0,
             .dstArrayElement = 0,
-            .descriptorCount = 1,
+            .descriptorCount =
+                static_cast<uint32_t>(descriptor_buffer_info.size()),
             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .pImageInfo = &descriptor_buffer_info,
+            .pImageInfo = descriptor_buffer_info.begin(),
         };
         vkUpdateDescriptorSets(
             device.get(), 1, &write_descriptor_set, 0, nullptr
@@ -769,7 +804,7 @@ ui::ui(
 
 void ui::push_frame(const frame &f) {
     uint8_t* source_row = f.pixels.y.get();
-    uint8_t* destination_row = video_buffer;
+    uint8_t* destination_row = video_y.buffer;
     for (auto y = 0u; y < f.height; y++) {
         std::move(
             source_row, source_row + f.width,
@@ -777,6 +812,26 @@ void ui::push_frame(const frame &f) {
         );
         source_row += f.width;
         destination_row += 1024; // TODO
+    }
+    source_row = f.pixels.cb.get();
+    destination_row = video_cb.buffer;
+    for (auto y = 0u; y < f.height / 2; y++) {
+        std::move(
+            source_row, source_row + f.width / 2,
+            destination_row
+        );
+        source_row += f.width / 2;
+        destination_row += 512; // TODO
+    }
+    source_row = f.pixels.cr.get();
+    destination_row = video_cr.buffer;
+    for (auto y = 0u; y < f.height / 2; y++) {
+        std::move(
+            source_row, source_row + f.width / 2,
+            destination_row
+        );
+        source_row += f.width / 2;
+        destination_row += 512; // TODO
     }
 }
 
