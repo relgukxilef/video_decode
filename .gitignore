@@ -6,3 +6,5 @@
 !*.glsl
 !*.txt
 !.gitignore
+
+build

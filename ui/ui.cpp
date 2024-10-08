@@ -1,11 +1,26 @@
 #include "ui.h"
 
+#include <vector>
+
 #include "../utility/out_ptr.h"
 
-extern uint32_t _binary_ui_video_vertex_glsl_spv_start;
-extern uint32_t _binary_ui_video_vertex_glsl_spv_end;
-extern uint32_t _binary_ui_video_fragment_glsl_spv_start;
-extern uint32_t _binary_ui_video_fragment_glsl_spv_end;
+struct file_deleter {
+    void operator()(FILE*f) const;
+};
+
+void file_deleter::operator()(FILE*f) const { fclose(f); }
+
+std::vector<uint8_t> read_file(const char* name) {
+    std::unique_ptr<FILE, file_deleter> file(fopen(name, "rb"));
+    if (!file.get())
+        throw std::exception();
+    fseek(file.get(), 0, SEEK_END);
+    auto size = ftell(file.get());
+    std::vector<uint8_t> content(size);
+    fseek(file.get(), 0, SEEK_SET);
+    fread(content.data(), sizeof(uint8_t), size, file.get());
+    return content;
+}
 
 dynamic_image::dynamic_image(ui &ui, unsigned size) {
     {
@@ -156,13 +171,14 @@ dynamic_image::dynamic_image(ui &ui, unsigned size) {
 }
 
 void create_shader(
-    unique_device& device, uint32_t& begin, uint32_t& end,
+    unique_device& device, const char* name,
     unique_shader_module& module
 ) {
+    auto code = read_file(name);
     VkShaderModuleCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-        .codeSize = static_cast<size_t>((&end - &begin) * 4),
-        .pCode = &begin,
+        .codeSize = (size_t)(code.size()),
+        .pCode = reinterpret_cast<uint32_t*>(code.data()),
     };
 
     check(vkCreateShaderModule(
@@ -525,12 +541,10 @@ ui::ui(
 
     unique_shader_module video_vertex, video_fragment;
     create_shader(
-        device, _binary_ui_video_vertex_glsl_spv_start,
-        _binary_ui_video_vertex_glsl_spv_end, video_vertex
+        device, "ui/video_vertex.glsl.spv", video_vertex
     );
     create_shader(
-        device, _binary_ui_video_fragment_glsl_spv_start,
-        _binary_ui_video_fragment_glsl_spv_end, video_fragment
+        device, "ui/video_fragment.glsl.spv", video_fragment
     );
 
     vkGetPhysicalDeviceMemoryProperties(
