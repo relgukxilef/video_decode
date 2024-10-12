@@ -67,8 +67,7 @@ add_shader(video_decode ui/video_fragment.glsl)
 target_compile_options(
     video_decode PUBLIC
     -Wall
-    /showIncludes
-    $<$<CONFIG:Debug>:-g -O0 -D_FORTIFY_SOURCE=2>
+    $<$<CONFIG:Debug>:-g -O0 -D_FORTIFY_SOURCE=2 /fsanitize=address>
 )
 target_link_options(
     video_decode PUBLIC

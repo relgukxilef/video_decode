@@ -246,11 +246,12 @@ int main() {
 
     ui ui(physical_device, surface.get());
 
-    chunk chunk = video.get_frame(32 * 1000);
+    video.seek(32 * 1000);
 
     frame_cache cache;
 
-    for (auto& frame : chunk.frames) {
+    for (int i = 0; i < 1000; i++) {
+        frame frame = video.get_next_frame();
         cache.put_frame({&video, frame.time, 0}, std::move(frame));
     }
 
@@ -260,7 +261,7 @@ int main() {
         glfwGetCursorPos(window.get(), &cursor_x, &cursor_y);
 
         auto f = cache.get_frame(
-            { &video, static_cast<uint64_t>(cursor_x + 32 * 1000), 0 }
+            { &video, static_cast<uint64_t>(cursor_x * 30 + 32 * 1000), 0 }
         );
         if (f != nullptr)
             ui.push_frame(*f);

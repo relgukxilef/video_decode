@@ -139,45 +139,32 @@ file::file(const char *filename) {
     packet = av_packet_alloc();
 }
 
-chunk file::get_frame(uint64_t milliseconds) {
-    chunk chunk;
-
+void file::seek(uint64_t milliseconds) {
     AVRational time_base = format_context->streams[stream_index]->time_base;
     int64_t timestamp = milliseconds * time_base.den / 1000 / time_base.num;
     check(av_seek_frame(
         format_context.get(), stream_index, timestamp, AVSEEK_FLAG_BACKWARD
     ));
+}
 
-    // read first frame, it'll be a keyframe
-    do {
-        check(av_read_frame(format_context.get(), packet.get()));
-    } while (packet->stream_index != stream_index);
-
-    int result;
-    do {
-        check(avcodec_send_packet(codec_context.get(), packet.get()));
-        av_packet_unref(packet.get());
-
-        // 1 packet may contain 0, 1 or more frames
-        result = avcodec_receive_frame(codec_context.get(), av_frame.get());
-        while (result == 0) {
-            check(av_buffersrc_add_frame(source_context, av_frame.get()));
-            check(av_buffersink_get_frame(sink_context, av_frame.get()));
-
-            chunk.frames.push_back(to_frame(av_frame.get(), time_base));
-
-            result = avcodec_receive_frame(codec_context.get(), av_frame.get());
-        }
-
+frame file::get_next_frame() {
+    while (true) {
+        int result = avcodec_receive_frame(codec_context.get(), av_frame.get());
+        if (result == 0)
+            break;
         if (result != AVERROR(EAGAIN))
             check(result);
 
-        // read next frame, stop when it's another keyframe
         do {
             check(av_read_frame(format_context.get(), packet.get()));
         } while (packet->stream_index != stream_index);
 
-    } while (result == AVERROR(EAGAIN) && packet->flags != AV_PKT_FLAG_KEY);
+        check(avcodec_send_packet(codec_context.get(), packet.get()));
+    }
 
-    return chunk;
+    check(av_buffersrc_add_frame(source_context, av_frame.get()));
+    check(av_buffersink_get_frame(sink_context, av_frame.get()));
+
+    AVRational time_base = format_context->streams[stream_index]->time_base;
+    return to_frame(av_frame.get(), time_base);
 }

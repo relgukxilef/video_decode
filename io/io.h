@@ -5,15 +5,11 @@
 #include "../utility/av_resource.h"
 #include "../data/frame.h"
 
-struct chunk {
-    std::vector<frame> frames;
-};
-
 struct file {
     file(const char* filename);
 
-    // TODO: return multiple frames if they are encoded together
-    chunk get_frame(uint64_t milliseconds);
+    void seek(uint64_t milliseconds);
+    frame get_next_frame();
 
     unique_av_format_context format_context;
     struct AVCodec* codec;
